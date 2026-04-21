@@ -1,9 +1,5 @@
 package guard
 
-import (
-	"os/exec"
-)
-
 func Toast(title, message string) {
 	// Use PowerShell to show Windows toast notification
 	script := `

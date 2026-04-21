@@ -50,6 +50,8 @@ func (g *Guard) OnReady() {
 	systray.SetTitle("Ollama Tray Guard")
 	systray.SetTooltip("Ollama Tray Guard - Monitoring VRAM")
 
+	g.stopCh = make(chan struct{})
+
 	g.mToggle = systray.AddMenuItem("Auto Guard: ON", "Toggle VRAM watchdog")
 	if !g.cfg.AutoGuard {
 		g.mToggle.SetTitle("Auto Guard: OFF")
@@ -66,13 +68,12 @@ func (g *Guard) OnReady() {
 	systray.AddSeparator()
 	g.mQuit = systray.AddMenuItem("Exit", "Quit application")
 
-	g.stopCh = make(chan struct{})
-
 	if g.cfg.AutoGuard {
 		g.startMonitor()
 	}
 
 	g.updateModelTitles()
+	g.startModelTitleUpdater()
 	g.startEventListeners()
 }
 
@@ -150,8 +151,6 @@ func (g *Guard) startEventListeners() {
 		}
 	}()
 
-	g.startModelTitleUpdater()
-
 	for _, mi := range g.modelItems {
 		if mi.name == "" {
 			continue
@@ -161,12 +160,30 @@ func (g *Guard) startEventListeners() {
 			for range mi.item.ClickedCh {
 				name := mi.name
 				go func() {
-					Toast("Ollama Tray Guard", fmt.Sprintf("Loading %s...", name))
-					if err := LoadModel(name); err != nil {
-						log.Printf("Load model error: %v", err)
-						Toast("Ollama Tray Guard", fmt.Sprintf("Failed to load %s: %v", name, err))
+					loaded, _ := OllamaRunningModels()
+					isLoaded := false
+					for _, m := range loaded {
+						if m == name {
+							isLoaded = true
+							break
+						}
+					}
+					if isLoaded {
+						Toast("Ollama Tray Guard", fmt.Sprintf("Unloading %s...", name))
+						if err := UnloadModel(name); err != nil {
+							log.Printf("Unload model error: %v", err)
+							Toast("Ollama Tray Guard", fmt.Sprintf("Failed to unload %s: %v", name, err))
+						} else {
+							Toast("Ollama Tray Guard", fmt.Sprintf("%s unloaded", name))
+						}
 					} else {
-						Toast("Ollama Tray Guard", fmt.Sprintf("%s loaded", name))
+						Toast("Ollama Tray Guard", fmt.Sprintf("Loading %s...", name))
+						if err := LoadModel(name); err != nil {
+							log.Printf("Load model error: %v", err)
+							Toast("Ollama Tray Guard", fmt.Sprintf("Failed to load %s: %v", name, err))
+						} else {
+							Toast("Ollama Tray Guard", fmt.Sprintf("%s loaded", name))
+						}
 					}
 				}()
 			}
@@ -198,12 +215,14 @@ func (g *Guard) updateModelTitles() {
 	for _, name := range loaded {
 		loadedMap[name] = true
 	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	for _, mi := range g.modelItems {
 		if mi.name == "" {
 			continue
 		}
 		if loadedMap[mi.name] {
-			mi.item.SetTitle("[*] " + mi.name)
+			mi.item.SetTitle("[*] Unload: " + mi.name)
 		} else {
 			mi.item.SetTitle("Load: " + mi.name)
 		}
