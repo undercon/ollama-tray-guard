@@ -31,6 +31,7 @@ type Guard struct {
 
 	mToggle   *systray.MenuItem
 	mForce    *systray.MenuItem
+	mOllama   *systray.MenuItem
 	mRefresh  *systray.MenuItem
 	mSettings *systray.MenuItem
 	mQuit     *systray.MenuItem
@@ -63,6 +64,7 @@ func (g *Guard) OnReady() {
 	g.buildModelMenu()
 
 	systray.AddSeparator()
+	g.mOllama = systray.AddMenuItem("Start Ollama Server", "Start Ollama server")
 	g.mRefresh = systray.AddMenuItem("Refresh Model List", "Re-fetch available models from Ollama")
 	g.mSettings = systray.AddMenuItem("Settings (edit config)", "Open config file")
 	systray.AddSeparator()
@@ -73,6 +75,7 @@ func (g *Guard) OnReady() {
 	}
 
 	g.updateModelTitles()
+	g.updateOllamaMenuItem()
 	g.startModelTitleUpdater()
 	g.startEventListeners()
 }
@@ -129,6 +132,21 @@ func (g *Guard) startEventListeners() {
 					Toast("Ollama Tray Guard", "No models were loaded")
 				}
 			}()
+		}
+	}()
+
+	go func() {
+		for range g.mOllama.ClickedCh {
+			ollamaRunning := OllamaRunning()
+			if ollamaRunning {
+				_ = StopOllama()
+				Toast("Ollama Tray Guard", "Ollama server stopped")
+			} else {
+				_ = StartOllama()
+				Toast("Ollama Tray Guard", "Starting Ollama server...")
+				time.Sleep(2 * time.Second)
+			}
+			g.updateOllamaMenuItem()
 		}
 	}()
 
@@ -229,6 +247,14 @@ func (g *Guard) updateModelTitles() {
 	}
 }
 
+func (g *Guard) updateOllamaMenuItem() {
+	if OllamaRunning() {
+		g.mOllama.SetTitle("Stop Ollama Server")
+	} else {
+		g.mOllama.SetTitle("Start Ollama Server")
+	}
+}
+
 func (g *Guard) startMonitor() {
 	if g.running {
 		return
@@ -271,17 +297,36 @@ func (g *Guard) check() {
 
 	if nonOllamaVRAM >= thresholdMB {
 		if g.state != StateRed {
-			unloaded, _ := UnloadAllModels()
-			if len(unloaded) > 0 {
-				Toast("GPU busy — Ollama unloaded",
-					fmt.Sprintf("%.1f GB non-Ollama VRAM in use", nonOllamaVRAM/1024))
+			mode := g.cfg.StopOllamaMode
+			if mode == "unload" || mode == "both" {
+				unloaded, _ := UnloadAllModels()
+				if len(unloaded) > 0 {
+					Toast("GPU busy — models unloaded",
+						fmt.Sprintf("%.1f GB non-Ollama VRAM in use", nonOllamaVRAM/1024))
+				}
+			}
+			if mode == "stop" || mode == "both" {
+				if OllamaRunning() {
+					_ = StopOllama()
+					Toast("GPU busy — Ollama server stopped",
+						fmt.Sprintf("%.1f GB non-Ollama VRAM in use", nonOllamaVRAM/1024))
+				}
 			}
 			g.setState(StateRed)
 		}
 	} else {
 		if g.state == StateRed {
-			Toast("GPU available — Ollama ready",
-				"VRAM pressure dropped. Models will reload on next request.")
+			mode := g.cfg.StopOllamaMode
+			if mode == "stop" || mode == "both" {
+				if !OllamaRunning() {
+					_ = StartOllama()
+					Toast("GPU available — Ollama server started",
+						"Starting server...")
+				}
+			} else {
+				Toast("GPU available — Ollama ready",
+					"Models will reload on next request.")
+			}
 		}
 		models, _ := OllamaRunningModels()
 		if len(models) > 0 {

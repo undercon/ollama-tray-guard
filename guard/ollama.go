@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -114,4 +115,26 @@ func UnloadAllModels() ([]string, error) {
 		}
 	}
 	return unloaded, nil
+}
+
+func OllamaRunning() bool {
+	_, err := noWindow("tasklist", "/FI", "IMAGENAME eq ollama.exe", "/FO", "CSV", "/NH").Output()
+	return err == nil
+}
+
+func StartOllama() error {
+	ollamaPath := os.Getenv("ProgramFiles\\Ollama\\ollama.exe")
+	if ollamaPath == "" {
+		ollamaPath = "C:\\Program Files\\Ollama\\ollama.exe"
+	}
+	if _, err := os.Stat(ollamaPath); err != nil {
+		ollamaPath = "ollama.exe"
+	}
+	_ = noWindow(ollamaPath, "serve").Start()
+	return nil
+}
+
+func StopOllama() error {
+	_ = noWindow("taskkill", "/F", "/IM", "ollama.exe").Start()
+	return nil
 }
